@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -33,7 +34,22 @@ var typeMapping = map[string]string{
 }
 
 func main() {
-	dsn := "sqlserver://user:pass@host:1433?database=yourdb"
+	// Define command line flag for database connection string
+	dsnFlag := flag.String("dsn", "", "Database connection string (e.g., sqlserver://user:pass@host:1433?database=yourdb)")
+	flag.Parse()
+
+	// Determine the DSN to use (command line arg -> environment variable -> default)
+	dsn := *dsnFlag
+	if dsn == "" {
+		// If not provided via command line, check environment variable
+		dsn = os.Getenv("DB_DSN")
+		if dsn == "" {
+			// If still not provided, use default
+			dsn = "sqlserver://user:pass@host:1433?database=yourdb"
+			fmt.Println("Warning: Using default database connection. Consider setting DB_DSN environment variable or using -dsn flag.")
+		}
+	}
+
 	db, err := sql.Open("sqlserver", dsn)
 	if err != nil {
 		log.Fatal(err)
@@ -112,7 +128,12 @@ func main() {
 	for _, table := range tableNames {
 		columns := tables[table]
 		if pks, ok := pkMap[table]; ok && len(pks) > 0 {
-			columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(pks, ", ")))
+			// Quote each primary key column name
+			quotedPKs := make([]string, len(pks))
+			for i, pk := range pks {
+				quotedPKs[i] = fmt.Sprintf("\"%s\"", pk)
+			}
+			columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(quotedPKs, ", ")))
 		}
 		schema := fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);\n\n", table, strings.Join(columns, ",\n"))
 		fmt.Print(schema)        // print to console
