@@ -1,0 +1,311 @@
+package main
+
+import (
+	"database/sql"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"time"
+
+	_ "github.com/denisenkom/go-mssqldb"
+	_ "github.com/lib/pq"
+)
+
+func main() {
+	// Define command line flags
+	sourceDsnFlag := flag.String("source-dsn", "", "SQL Server connection string (e.g., sqlserver://user:pass@host:1433?database=yourdb)")
+	targetDsnFlag := flag.String("target-dsn", "", "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/dbname?sslmode=disable)")
+	batchSizeFlag := flag.Int("batch-size", 1000, "Number of rows to process in each batch")
+	tablesFlag := flag.String("tables", "", "Comma-separated list of tables to migrate (default: all)")
+	excludeTablesFlag := flag.String("exclude-tables", "", "Comma-separated list of tables to exclude from migration")
+	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
+	flag.Parse()
+
+	// Determine the source DSN to use (command line arg -> environment variable -> default)
+	sourceDsn := *sourceDsnFlag
+	if sourceDsn == "" {
+		// If not provided via command line, check environment variable
+		sourceDsn = os.Getenv("SOURCE_DB_DSN")
+		if sourceDsn == "" {
+			// If still not provided, use default
+			sourceDsn = "sqlserver://user:pass@host:1433?database=yourdb"
+			fmt.Println("Warning: Using default source database connection. Consider setting SOURCE_DB_DSN environment variable or using -source-dsn flag.")
+		}
+	}
+
+	// Determine the target DSN to use (command line arg -> environment variable -> default)
+	targetDsn := *targetDsnFlag
+	if targetDsn == "" {
+		// If not provided via command line, check environment variable
+		targetDsn = os.Getenv("TARGET_DB_DSN")
+		if targetDsn == "" {
+			// If still not provided, use default
+			targetDsn = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+			fmt.Println("Warning: Using default target database connection. Consider setting TARGET_DB_DSN environment variable or using -target-dsn flag.")
+		}
+	}
+
+	// Connect to source database (SQL Server)
+	sourceDb, err := sql.Open("sqlserver", sourceDsn)
+	if err != nil {
+		log.Fatalf("Error connecting to source database: %v", err)
+	}
+	defer sourceDb.Close()
+
+	// Test source connection
+	if err := sourceDb.Ping(); err != nil {
+		log.Fatalf("Error connecting to source database: %v", err)
+	}
+	fmt.Println("✅ Connected to SQL Server source database")
+
+	// Connect to target database (PostgreSQL)
+	targetDb, err := sql.Open("postgres", targetDsn)
+	if err != nil {
+		log.Fatalf("Error connecting to target database: %v", err)
+	}
+	defer targetDb.Close()
+
+	// Test target connection
+	if err := targetDb.Ping(); err != nil {
+		log.Fatalf("Error connecting to target database: %v", err)
+	}
+	fmt.Println("✅ Connected to PostgreSQL target database")
+
+	// Get list of tables from source database
+	tables, err := getSourceTables(sourceDb)
+	if err != nil {
+		log.Fatalf("Error getting tables: %v", err)
+	}
+
+	// Filter tables if specified
+	if *tablesFlag != "" {
+		includeTables := strings.Split(*tablesFlag, ",")
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			for _, includeTable := range includeTables {
+				if strings.EqualFold(strings.TrimSpace(includeTable), table) {
+					filteredTables = append(filteredTables, table)
+					break
+				}
+			}
+		}
+		tables = filteredTables
+	}
+
+	// Exclude tables if specified
+	if *excludeTablesFlag != "" {
+		excludeTables := strings.Split(*excludeTablesFlag, ",")
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			exclude := false
+			for _, excludeTable := range excludeTables {
+				if strings.EqualFold(strings.TrimSpace(excludeTable), table) {
+					exclude = true
+					break
+				}
+			}
+			if !exclude {
+				filteredTables = append(filteredTables, table)
+			}
+		}
+		tables = filteredTables
+	}
+
+	fmt.Printf("Found %d tables to migrate\n", len(tables))
+
+	// Migrate each table
+	startTime := time.Now()
+	totalRows := 0
+
+	for _, table := range tables {
+		fmt.Printf("Migrating table: %s\n", table)
+
+		// Get column information
+		columns, err := getTableColumns(sourceDb, table)
+		if err != nil {
+			log.Fatalf("Error getting columns for table %s: %v", table, err)
+		}
+
+		// Truncate target table if specified
+		if *truncateFlag {
+			_, err := targetDb.Exec(fmt.Sprintf("TRUNCATE TABLE \"%s\"", table))
+			if err != nil {
+				log.Printf("Warning: Could not truncate table %s: %v", table, err)
+			} else {
+				fmt.Printf("Truncated table: %s\n", table)
+			}
+		}
+
+		// Migrate data
+		rowCount, err := migrateTableData(sourceDb, targetDb, table, columns, *batchSizeFlag)
+		if err != nil {
+			log.Fatalf("Error migrating data for table %s: %v", table, err)
+		}
+
+		totalRows += rowCount
+		fmt.Printf("✅ Migrated %d rows from table: %s\n", rowCount, table)
+	}
+
+	duration := time.Since(startTime)
+	fmt.Printf("\n✅ Migration completed in %s\n", duration)
+	fmt.Printf("✅ Total rows migrated: %d\n", totalRows)
+}
+
+// getSourceTables returns a list of all tables in the source database
+func getSourceTables(db *sql.DB) ([]string, error) {
+	query := `
+		SELECT TABLE_NAME
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_TYPE = 'BASE TABLE'
+		AND TABLE_SCHEMA = 'dbo'
+		ORDER BY TABLE_NAME`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return nil, err
+		}
+		tables = append(tables, tableName)
+	}
+
+	return tables, nil
+}
+
+// getTableColumns returns information about columns in the specified table
+func getTableColumns(db *sql.DB, tableName string) ([]string, error) {
+	query := `
+		SELECT COLUMN_NAME
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE TABLE_NAME = @p1
+		ORDER BY ORDINAL_POSITION`
+
+	rows, err := db.Query(query, tableName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var columnName string
+		if err := rows.Scan(&columnName); err != nil {
+			return nil, err
+		}
+		columns = append(columns, columnName)
+	}
+
+	return columns, nil
+}
+
+// migrateTableData migrates data from the source table to the target table
+func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, columns []string, batchSize int) (int, error) {
+	// Build column list for queries
+	columnList := make([]string, len(columns))
+	placeholders := make([]string, len(columns))
+
+	for i, col := range columns {
+		columnList[i] = fmt.Sprintf("\"%s\"", col)
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+
+	// Prepare select query
+	selectQuery := fmt.Sprintf("SELECT %s FROM [%s]", strings.Join(columns, ", "), tableName)
+
+	// Prepare insert query
+	insertQuery := fmt.Sprintf(
+		"INSERT INTO \"%s\" (%s) VALUES (%s)",
+		tableName,
+		strings.Join(columnList, ", "),
+		strings.Join(placeholders, ", "),
+	)
+
+	// Execute select query
+	rows, err := sourceDb.Query(selectQuery)
+	if err != nil {
+		return 0, fmt.Errorf("error querying source table: %v", err)
+	}
+	defer rows.Close()
+
+	// Prepare insert statement
+	stmt, err := targetDb.Prepare(insertQuery)
+	if err != nil {
+		return 0, fmt.Errorf("error preparing insert statement: %v", err)
+	}
+	defer stmt.Close()
+
+	// Start a transaction for batch inserts
+	tx, err := targetDb.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("error starting transaction: %v", err)
+	}
+
+	// Prepare statement within transaction
+	txStmt := tx.Stmt(stmt)
+	defer txStmt.Close()
+
+	// Process rows in batches
+	rowCount := 0
+	batchCount := 0
+
+	for rows.Next() {
+		// Create a slice to hold the column values
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+
+		// Create pointers to each element in the values slice
+		for i := range values {
+			valuePtrs[i] = &values[i]
+		}
+
+		// Scan the row into the values slice
+		if err := rows.Scan(valuePtrs...); err != nil {
+			tx.Rollback()
+			return rowCount, fmt.Errorf("error scanning row: %v", err)
+		}
+
+		// Execute insert statement
+		_, err := txStmt.Exec(values...)
+		if err != nil {
+			tx.Rollback()
+			return rowCount, fmt.Errorf("error inserting row: %v", err)
+		}
+
+		rowCount++
+		batchCount++
+
+		// Commit transaction and start a new one after each batch
+		if batchCount >= batchSize {
+			if err := tx.Commit(); err != nil {
+				return rowCount, fmt.Errorf("error committing transaction: %v", err)
+			}
+
+			// Start a new transaction
+			tx, err = targetDb.Begin()
+			if err != nil {
+				return rowCount, fmt.Errorf("error starting transaction: %v", err)
+			}
+			txStmt = tx.Stmt(stmt)
+
+			fmt.Printf("  Migrated %d rows...\n", rowCount)
+			batchCount = 0
+		}
+	}
+
+	// Commit any remaining rows
+	if batchCount > 0 {
+		if err := tx.Commit(); err != nil {
+			return rowCount, fmt.Errorf("error committing final transaction: %v", err)
+		}
+	}
+
+	return rowCount, nil
+}

@@ -27,3 +27,6 @@ go.work.sum
 
 dbmigrate
 postgres_schema.sql
+
+migrate
+schema
