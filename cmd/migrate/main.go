@@ -54,6 +54,11 @@ func main() {
 	}
 	defer sourceDb.Close()
 
+	// Configure connection pool for source database
+	sourceDb.SetMaxOpenConns(10)
+	sourceDb.SetMaxIdleConns(5)
+	sourceDb.SetConnMaxLifetime(time.Minute * 5)
+
 	// Test source connection
 	if err := sourceDb.Ping(); err != nil {
 		log.Fatalf("Error connecting to source database: %v", err)
@@ -66,6 +71,11 @@ func main() {
 		log.Fatalf("Error connecting to target database: %v", err)
 	}
 	defer targetDb.Close()
+
+	// Configure connection pool for target database
+	targetDb.SetMaxOpenConns(10)
+	targetDb.SetMaxIdleConns(5)
+	targetDb.SetConnMaxLifetime(time.Minute * 5)
 
 	// Test target connection
 	if err := targetDb.Ping(); err != nil {
@@ -211,14 +221,18 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 	// Build column list for queries
 	columnList := make([]string, len(columns))
 	placeholders := make([]string, len(columns))
+	sqlServerColumns := make([]string, len(columns))
 
 	for i, col := range columns {
+		// PostgreSQL uses double quotes for identifiers
 		columnList[i] = fmt.Sprintf("\"%s\"", col)
+		// SQL Server uses square brackets for identifiers
+		sqlServerColumns[i] = fmt.Sprintf("[%s]", col)
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 
-	// Prepare select query
-	selectQuery := fmt.Sprintf("SELECT %s FROM [%s]", strings.Join(columns, ", "), tableName)
+	// Prepare select query with properly escaped column names
+	selectQuery := fmt.Sprintf("SELECT %s FROM [%s]", strings.Join(sqlServerColumns, ", "), tableName)
 
 	// Prepare insert query
 	insertQuery := fmt.Sprintf(
@@ -235,26 +249,24 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 	}
 	defer rows.Close()
 
-	// Prepare insert statement
-	stmt, err := targetDb.Prepare(insertQuery)
-	if err != nil {
-		return 0, fmt.Errorf("error preparing insert statement: %v", err)
-	}
-	defer stmt.Close()
+	// Process rows in batches
+	rowCount := 0
+	batchCount := 0
+	batchSize = 100 // Reduce batch size to avoid connection issues
 
-	// Start a transaction for batch inserts
+	// Create a new transaction for each batch
 	tx, err := targetDb.Begin()
 	if err != nil {
 		return 0, fmt.Errorf("error starting transaction: %v", err)
 	}
 
 	// Prepare statement within transaction
-	txStmt := tx.Stmt(stmt)
-	defer txStmt.Close()
-
-	// Process rows in batches
-	rowCount := 0
-	batchCount := 0
+	stmt, err := tx.Prepare(insertQuery)
+	if err != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("error preparing insert statement: %v", err)
+	}
+	defer stmt.Close()
 
 	for rows.Next() {
 		// Create a slice to hold the column values
@@ -273,7 +285,7 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 		}
 
 		// Execute insert statement
-		_, err := txStmt.Exec(values...)
+		_, err := stmt.Exec(values...)
 		if err != nil {
 			tx.Rollback()
 			return rowCount, fmt.Errorf("error inserting row: %v", err)
@@ -288,14 +300,22 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 				return rowCount, fmt.Errorf("error committing transaction: %v", err)
 			}
 
-			// Start a new transaction
+			fmt.Printf("  Migrated %d rows...\n", rowCount)
+
+			// Start a new transaction and prepare a new statement
 			tx, err = targetDb.Begin()
 			if err != nil {
 				return rowCount, fmt.Errorf("error starting transaction: %v", err)
 			}
-			txStmt = tx.Stmt(stmt)
 
-			fmt.Printf("  Migrated %d rows...\n", rowCount)
+			// Close the previous statement and prepare a new one
+			stmt.Close()
+			stmt, err = tx.Prepare(insertQuery)
+			if err != nil {
+				tx.Rollback()
+				return rowCount, fmt.Errorf("error preparing insert statement: %v", err)
+			}
+
 			batchCount = 0
 		}
 	}
@@ -305,6 +325,9 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 		if err := tx.Commit(); err != nil {
 			return rowCount, fmt.Errorf("error committing final transaction: %v", err)
 		}
+	} else {
+		// If there were no rows in the last batch, rollback the empty transaction
+		tx.Rollback()
 	}
 
 	return rowCount, nil
