@@ -52,19 +52,57 @@ func main() {
 
 	// Ensure the connection string has the required parameters for SQL Server
 	// This is especially important for AWS RDS instances
-	if !strings.Contains(dsn, "connection timeout") {
-		// Add connection timeout if not present
-		if strings.Contains(dsn, "?") {
-			dsn += "&connection timeout=30"
-		} else {
-			dsn += "?connection timeout=30"
+
+	// Start with the base DSN
+	dsnParams := make(map[string]string)
+
+	// Parse existing parameters
+	if strings.Contains(dsn, "?") {
+		parts := strings.SplitN(dsn, "?", 2)
+		baseURL := parts[0]
+		params := parts[1]
+
+		// Extract existing parameters
+		for _, param := range strings.Split(params, "&") {
+			if param == "" {
+				continue
+			}
+			keyValue := strings.SplitN(param, "=", 2)
+			if len(keyValue) == 2 {
+				dsnParams[keyValue[0]] = keyValue[1]
+			}
+		}
+
+		// Remove parameters from the base DSN
+		dsn = baseURL
+	}
+
+	// Add required parameters if not already present
+	if _, ok := dsnParams["connection timeout"]; !ok {
+		dsnParams["connection timeout"] = "30"
+	}
+
+	// For AWS RDS instances, add specific parameters
+	if strings.Contains(dsn, "rds.amazonaws.com") {
+		if _, ok := dsnParams["encrypt"]; !ok {
+			dsnParams["encrypt"] = "disable"
+		}
+		if _, ok := dsnParams["server sni"]; !ok {
+			dsnParams["server sni"] = "disable"
+		}
+		if _, ok := dsnParams["browser"]; !ok {
+			dsnParams["browser"] = "disable"
 		}
 	}
 
-	// Disable SQL Server Browser service lookup for AWS RDS instances
-	if strings.Contains(dsn, "rds.amazonaws.com") && !strings.Contains(dsn, "server sni") {
-		// Add server SNI parameter for AWS RDS instances
-		dsn += "&server sni=disable"
+	// Rebuild the connection string
+	if len(dsnParams) > 0 {
+		dsn += "?"
+		paramStrings := make([]string, 0, len(dsnParams))
+		for key, value := range dsnParams {
+			paramStrings = append(paramStrings, key+"="+value)
+		}
+		dsn += strings.Join(paramStrings, "&")
 	}
 
 	fmt.Printf("Connecting to SQL Server with DSN: %s\n", dsn)
