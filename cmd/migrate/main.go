@@ -605,10 +605,11 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 	}
 	defer rows.Close()
 
-	// Process rows in batches
+	// Process rows in batches using the user-specified batch size
 	rowCount := 0
 	batchCount := 0
-	batchSize = 100 // Reduce batch size to avoid connection issues
+	// The batch size controls how many rows are processed in a single transaction
+	fmt.Printf("Using batch size: %d rows per transaction\n", batchSize)
 
 	// Create a new transaction for each batch
 	tx, err := targetDb.Begin()

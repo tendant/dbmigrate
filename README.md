@@ -67,7 +67,7 @@ go run cmd/migrate/main.go [options]
 
 - `-source-dsn string`: SQL Server connection string
 - `-target-dsn string`: PostgreSQL connection string
-- `-batch-size int`: Number of rows to process in each batch (default: 1000)
+- `-batch-size int`: Number of rows to process in each batch (default: 1000). This value is fully customizable and will be respected by the migration process.
 - `-tables string`: Comma-separated list of tables to migrate (default: all)
 - `-exclude-tables string`: Comma-separated list of tables to exclude from migration
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
