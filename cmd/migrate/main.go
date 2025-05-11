@@ -328,7 +328,16 @@ func main() {
 
 		// Truncate target table if specified
 		if *truncateFlag {
-			_, err := targetDb.Exec(fmt.Sprintf("TRUNCATE TABLE \"%s\"", table))
+			// Split the full table name into schema and table
+			parts := strings.Split(table, ".")
+			if len(parts) != 2 {
+				log.Printf("Warning: Invalid table name format: %s (expected schema.table)", table)
+				continue
+			}
+			schema := parts[0]
+			tableName := parts[1]
+
+			_, err := targetDb.Exec(fmt.Sprintf("TRUNCATE TABLE \"%s\".\"%s\"", schema, tableName))
 			if err != nil {
 				log.Printf("Warning: Could not truncate table %s: %v", table, err)
 			} else {
@@ -451,10 +460,11 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 	// Prepare select query with properly escaped column names
 	selectQuery := fmt.Sprintf("SELECT %s FROM [%s].[%s]", strings.Join(sqlServerColumns, ", "), schema, table)
 
-	// Prepare insert query
+	// Prepare insert query with schema-qualified table name
 	insertQuery := fmt.Sprintf(
-		"INSERT INTO \"%s\" (%s) VALUES (%s)",
-		fullTableName,
+		"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
+		schema,
+		table,
 		strings.Join(columnList, ", "),
 		strings.Join(placeholders, ", "),
 	)

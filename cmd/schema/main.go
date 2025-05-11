@@ -343,6 +343,9 @@ func main() {
 	}
 	sort.Strings(tableNames)
 
+	// Create a map to track which schemas we've created
+	createdSchemas := make(map[string]bool)
+
 	for _, table := range tableNames {
 		columns := tables[table]
 		if pks, ok := pkMap[table]; ok && len(pks) > 0 {
@@ -353,9 +356,35 @@ func main() {
 			}
 			columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(quotedPKs, ", ")))
 		}
-		schema := fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);\n\n", table, strings.Join(columns, ",\n"))
-		fmt.Print(schema)        // print to console
-		file.WriteString(schema) // write to file
+
+		var schemaSQL string
+
+		// Check if table name contains a schema prefix
+		if strings.Contains(table, ".") {
+			// Case 1: Schema specified (e.g., "dbo.Users")
+			parts := strings.Split(table, ".")
+			schemaName := parts[0]
+			tableName := parts[1]
+
+			// Create schema if it doesn't exist and we haven't created it yet
+			if !createdSchemas[schemaName] {
+				createSchema := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\";\n\n", schemaName)
+				file.WriteString(createSchema) // write to file
+				fmt.Print(createSchema)        // print to console
+				createdSchemas[schemaName] = true
+			}
+
+			// Create table in the specified schema
+			schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\".\"%s\" (\n%s\n);\n\n",
+				schemaName, tableName, strings.Join(columns, ",\n"))
+		} else {
+			// Case 2: No schema specified, use public schema
+			schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);\n\n",
+				table, strings.Join(columns, ",\n"))
+		}
+
+		fmt.Print(schemaSQL)        // print to console
+		file.WriteString(schemaSQL) // write to file
 	}
 
 	fmt.Println("✅ PostgreSQL schema written to postgres_schema.sql")

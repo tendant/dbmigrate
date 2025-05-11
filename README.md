@@ -115,6 +115,34 @@ sqlserver://username:password@your-instance.rds.amazonaws.com:1433?database=dbna
   - `dial timeout=10` - Sets a dial timeout to prevent hanging
   - `server=hostname` - Explicitly sets the server hostname to prevent localhost resolution issues
 
+### Setting Connection Strings
+
+Both tools support multiple ways to specify database connection strings, in the following order of precedence:
+
+1. **Command Line Arguments**:
+   ```bash
+   # For schema tool
+   ./schema -dsn "sqlserver://user:pass@host:1433?database=yourdb"
+   
+   # For migrate tool
+   ./migrate -source-dsn "sqlserver://user:pass@host:1433?database=yourdb" \
+             -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable"
+   ```
+
+2. **Environment Variables**:
+   ```bash
+   # For schema tool
+   export DB_DSN="sqlserver://user:pass@host:1433?database=yourdb"
+   ./schema
+   
+   # For migrate tool
+   export SOURCE_DB_DSN="sqlserver://user:pass@host:1433?database=yourdb"
+   export TARGET_DB_DSN="postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable"
+   ./migrate
+   ```
+
+3. **Default Values** (if neither command line args nor environment variables are provided)
+
 ### Handling Special Characters in Passwords
 
 If your database password contains special characters, you need to URL-encode those characters in the connection string. Here are some common special characters and their URL-encoded equivalents:
@@ -198,7 +226,12 @@ go run cmd/migrate/main.go -source-dsn "sqlserver://user:pass@host:1433?database
                           -schemas "dbo,sales,hr"
 ```
 
-The generated PostgreSQL schema and data migration will preserve the schema structure by creating tables with schema-qualified names (e.g., `"dbo"."Users"`, `"sales"."Orders"`).
+The generated PostgreSQL schema will:
+1. Create the necessary schemas if they don't exist (e.g., `CREATE SCHEMA IF NOT EXISTS "dbo";`)
+2. Create tables in their respective schemas (e.g., `CREATE TABLE "dbo"."Users"` instead of `CREATE TABLE "dbo.Users"`)
+3. Properly handle tables without schema prefixes by creating them in the public schema
+
+This ensures that the PostgreSQL database structure properly mirrors the SQL Server schema organization, making it easier to maintain the same access patterns and permissions model.
 
 ## Complete Migration Process
 
