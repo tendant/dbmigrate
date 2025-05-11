@@ -26,6 +26,7 @@ go run cmd/schema/main.go [options]
 #### Options
 
 - `-dsn string`: SQL Server connection string
+- `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
 
 #### Environment Variables
 
@@ -63,6 +64,7 @@ go run cmd/migrate/main.go [options]
 - `-batch-size int`: Number of rows to process in each batch (default: 1000)
 - `-tables string`: Comma-separated list of tables to migrate (default: all)
 - `-exclude-tables string`: Comma-separated list of tables to exclude from migration
+- `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
 - `-truncate`: Whether to truncate target tables before migration (default: false)
 
 #### Environment Variables
@@ -119,13 +121,29 @@ sqlserver://username:password@your-instance.rds.amazonaws.com:1433?database=dbna
 postgres://username:password@host:port/dbname?sslmode=disable
 ```
 
+## Working with Multiple Schemas
+
+Both tools support working with multiple schemas in SQL Server. By default, they only include tables from the "dbo" schema, but you can specify multiple schemas using the `-schemas` flag:
+
+```bash
+# Include tables from multiple schemas
+go run cmd/schema/main.go -dsn "sqlserver://user:pass@host:1433?database=yourdb" -schemas "dbo,sales,hr"
+
+# Migrate data from multiple schemas
+go run cmd/migrate/main.go -source-dsn "sqlserver://user:pass@host:1433?database=yourdb" \
+                          -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable" \
+                          -schemas "dbo,sales,hr"
+```
+
+The generated PostgreSQL schema and data migration will preserve the schema structure by creating tables with schema-qualified names (e.g., `"dbo"."Users"`, `"sales"."Orders"`).
+
 ## Complete Migration Process
 
 To perform a complete migration from SQL Server to PostgreSQL:
 
 1. First, generate the PostgreSQL schema:
    ```bash
-   go run cmd/schema/main.go -dsn "sqlserver://sa:pass@localhost:1433?database=yourdb"
+   go run cmd/schema/main.go -dsn "sqlserver://sa:pass@localhost:1433?database=yourdb" -schemas "dbo,sales,hr"
    ```
 
 2. Apply the generated schema to your PostgreSQL database:
@@ -136,5 +154,6 @@ To perform a complete migration from SQL Server to PostgreSQL:
 3. Migrate the data:
    ```bash
    go run cmd/migrate/main.go -source-dsn "sqlserver://sa:pass@localhost:1433?database=yourdb" \
-                             -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable"
+                             -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable" \
+                             -schemas "dbo,sales,hr"
    ```

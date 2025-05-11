@@ -34,8 +34,9 @@ var typeMapping = map[string]string{
 }
 
 func main() {
-	// Define command line flag for database connection string
+	// Define command line flags
 	dsnFlag := flag.String("dsn", "", "Database connection string (e.g., sqlserver://user:pass@host:1433?database=yourdb)")
+	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
 	flag.Parse()
 
 	// Determine the DSN to use (command line arg -> environment variable -> default)
@@ -132,6 +133,13 @@ func main() {
 		dsn += strings.Join(paramStrings, "&")
 	}
 
+	// Parse schemas flag
+	schemas := strings.Split(*schemasFlag, ",")
+	for i, schema := range schemas {
+		schemas[i] = strings.TrimSpace(schema)
+	}
+	fmt.Printf("Including schemas: %s\n", strings.Join(schemas, ", "))
+
 	fmt.Printf("Connecting to SQL Server with DSN: %s\n", dsn)
 	db, err := sql.Open("sqlserver", dsn)
 	if err != nil {
@@ -139,29 +147,54 @@ func main() {
 	}
 	defer db.Close()
 
-	columnQuery := `
-		SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
-		FROM INFORMATION_SCHEMA.COLUMNS
-		ORDER BY TABLE_NAME, ORDINAL_POSITION`
+	// Build schema filter for SQL queries
+	schemaFilter := ""
+	schemaParams := make([]interface{}, len(schemas))
+	for i, schema := range schemas {
+		if i > 0 {
+			schemaFilter += " OR "
+		}
+		schemaFilter += "TABLE_SCHEMA = @p" + fmt.Sprintf("%d", i+1)
+		schemaParams[i] = schema
+	}
 
-	pkQuery := `
-		SELECT t.name AS table_name, c.name AS column_name
+	columnQuery := fmt.Sprintf(`
+		SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+		FROM INFORMATION_SCHEMA.COLUMNS
+		WHERE %s
+		ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`, schemaFilter)
+
+	// Build schema filter for primary key query
+	schemaPKFilter := ""
+	for i, schema := range schemas {
+		if i > 0 {
+			schemaPKFilter += " OR "
+		}
+		schemaPKFilter += "s.name = '" + schema + "'"
+	}
+
+	pkQuery := fmt.Sprintf(`
+		SELECT s.name AS schema_name, t.name AS table_name, c.name AS column_name
 		FROM sys.indexes i
 		JOIN sys.index_columns ic ON i.object_id = ic.object_id AND i.index_id = ic.index_id
 		JOIN sys.columns c ON ic.object_id = c.object_id AND ic.column_id = c.column_id
 		JOIN sys.tables t ON i.object_id = t.object_id
-		WHERE i.is_primary_key = 1`
+		JOIN sys.schemas s ON t.schema_id = s.schema_id
+		WHERE i.is_primary_key = 1
+		AND (%s)`, schemaPKFilter)
 
-	rows, err := db.Query(columnQuery)
+	rows, err := db.Query(columnQuery, schemaParams...)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer rows.Close()
 
 	tables := make(map[string][]string)
+	schemaTableMap := make(map[string]string) // Maps full table name to schema.table format
+
 	for rows.Next() {
-		var table, column, dataType, nullable string
-		if err := rows.Scan(&table, &column, &dataType, &nullable); err != nil {
+		var schema, table, column, dataType, nullable string
+		if err := rows.Scan(&schema, &table, &column, &dataType, &nullable); err != nil {
 			log.Fatal(err)
 		}
 
@@ -175,8 +208,12 @@ func main() {
 			null = "NULL"
 		}
 
+		// Create a unique table identifier that includes the schema
+		tableKey := schema + "." + table
+		schemaTableMap[table] = tableKey
+
 		colDef := fmt.Sprintf("  \"%s\" %s %s", column, pgType, null)
-		tables[table] = append(tables[table], colDef)
+		tables[tableKey] = append(tables[tableKey], colDef)
 	}
 
 	// Get primary key columns
@@ -188,11 +225,12 @@ func main() {
 
 	pkMap := make(map[string][]string)
 	for pkRows.Next() {
-		var table, column string
-		if err := pkRows.Scan(&table, &column); err != nil {
+		var schema, table, column string
+		if err := pkRows.Scan(&schema, &table, &column); err != nil {
 			log.Fatal(err)
 		}
-		pkMap[table] = append(pkMap[table], column)
+		tableKey := schema + "." + table
+		pkMap[tableKey] = append(pkMap[tableKey], column)
 	}
 
 	// Write schema to file

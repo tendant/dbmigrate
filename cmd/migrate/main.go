@@ -20,6 +20,7 @@ func main() {
 	batchSizeFlag := flag.Int("batch-size", 1000, "Number of rows to process in each batch")
 	tablesFlag := flag.String("tables", "", "Comma-separated list of tables to migrate (default: all)")
 	excludeTablesFlag := flag.String("exclude-tables", "", "Comma-separated list of tables to exclude from migration")
+	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
 	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
 	flag.Parse()
 
@@ -167,8 +168,15 @@ func main() {
 	}
 	fmt.Println("✅ Connected to PostgreSQL target database")
 
+	// Parse schemas flag
+	schemas := strings.Split(*schemasFlag, ",")
+	for i, schema := range schemas {
+		schemas[i] = strings.TrimSpace(schema)
+	}
+	fmt.Printf("Including schemas: %s\n", strings.Join(schemas, ", "))
+
 	// Get list of tables from source database
-	tables, err := getSourceTables(sourceDb)
+	tables, err := getSourceTables(sourceDb, schemas)
 	if err != nil {
 		log.Fatalf("Error getting tables: %v", err)
 	}
@@ -248,15 +256,26 @@ func main() {
 }
 
 // getSourceTables returns a list of all tables in the source database
-func getSourceTables(db *sql.DB) ([]string, error) {
-	query := `
-		SELECT TABLE_NAME
+func getSourceTables(db *sql.DB, schemas []string) ([]string, error) {
+	// Build schema filter for SQL queries
+	schemaFilter := ""
+	schemaParams := make([]interface{}, len(schemas))
+	for i, schema := range schemas {
+		if i > 0 {
+			schemaFilter += " OR "
+		}
+		schemaFilter += "TABLE_SCHEMA = @p" + fmt.Sprintf("%d", i+1)
+		schemaParams[i] = schema
+	}
+
+	query := fmt.Sprintf(`
+		SELECT TABLE_SCHEMA, TABLE_NAME
 		FROM INFORMATION_SCHEMA.TABLES
 		WHERE TABLE_TYPE = 'BASE TABLE'
-		AND TABLE_SCHEMA = 'dbo'
-		ORDER BY TABLE_NAME`
+		AND (%s)
+		ORDER BY TABLE_SCHEMA, TABLE_NAME`, schemaFilter)
 
-	rows, err := db.Query(query)
+	rows, err := db.Query(query, schemaParams...)
 	if err != nil {
 		return nil, err
 	}
@@ -264,25 +283,35 @@ func getSourceTables(db *sql.DB) ([]string, error) {
 
 	var tables []string
 	for rows.Next() {
-		var tableName string
-		if err := rows.Scan(&tableName); err != nil {
+		var schema, tableName string
+		if err := rows.Scan(&schema, &tableName); err != nil {
 			return nil, err
 		}
-		tables = append(tables, tableName)
+		// Create a fully qualified table name with schema
+		fullTableName := schema + "." + tableName
+		tables = append(tables, fullTableName)
 	}
 
 	return tables, nil
 }
 
 // getTableColumns returns information about columns in the specified table
-func getTableColumns(db *sql.DB, tableName string) ([]string, error) {
+func getTableColumns(db *sql.DB, fullTableName string) ([]string, error) {
+	// Split the full table name into schema and table
+	parts := strings.Split(fullTableName, ".")
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid table name format: %s (expected schema.table)", fullTableName)
+	}
+	schema := parts[0]
+	table := parts[1]
+
 	query := `
 		SELECT COLUMN_NAME
 		FROM INFORMATION_SCHEMA.COLUMNS
-		WHERE TABLE_NAME = @p1
+		WHERE TABLE_SCHEMA = @p1 AND TABLE_NAME = @p2
 		ORDER BY ORDINAL_POSITION`
 
-	rows, err := db.Query(query, tableName)
+	rows, err := db.Query(query, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +330,15 @@ func getTableColumns(db *sql.DB, tableName string) ([]string, error) {
 }
 
 // migrateTableData migrates data from the source table to the target table
-func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, columns []string, batchSize int) (int, error) {
+func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, columns []string, batchSize int) (int, error) {
+	// Split the full table name into schema and table
+	parts := strings.Split(fullTableName, ".")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid table name format: %s (expected schema.table)", fullTableName)
+	}
+	schema := parts[0]
+	table := parts[1]
+
 	// Build column list for queries
 	columnList := make([]string, len(columns))
 	placeholders := make([]string, len(columns))
@@ -316,12 +353,12 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, tableName string, colu
 	}
 
 	// Prepare select query with properly escaped column names
-	selectQuery := fmt.Sprintf("SELECT %s FROM [%s]", strings.Join(sqlServerColumns, ", "), tableName)
+	selectQuery := fmt.Sprintf("SELECT %s FROM [%s].[%s]", strings.Join(sqlServerColumns, ", "), schema, table)
 
 	// Prepare insert query
 	insertQuery := fmt.Sprintf(
 		"INSERT INTO \"%s\" (%s) VALUES (%s)",
-		tableName,
+		fullTableName,
 		strings.Join(columnList, ", "),
 		strings.Join(placeholders, ", "),
 	)
