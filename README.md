@@ -103,11 +103,15 @@ For AWS RDS SQL Server instances, use:
 sqlserver://username:password@your-instance.rds.amazonaws.com:1433?database=dbname
 ```
 
-The tools will automatically add necessary parameters for AWS RDS instances, including:
-- `connection timeout=30` - Sets a connection timeout to prevent hanging
-- `encrypt=disable` - Disables encryption which can cause issues with AWS RDS
-- `server sni=disable` - Disables Server Name Indication
-- `browser=disable` - Disables SQL Server Browser service lookup (port 1434)
+**Important Notes:**
+- Always use `sqlserver://` protocol (not `mssql://`). The tools will automatically correct this if needed.
+- The tools will automatically add necessary parameters for AWS RDS instances, including:
+  - `connection timeout=30` - Sets a connection timeout to prevent hanging
+  - `encrypt=disable` - Disables encryption which can cause issues with AWS RDS
+  - `server sni=disable` - Disables Server Name Indication
+  - `browser=disable` - Disables SQL Server Browser service lookup (port 1434)
+  - `dial timeout=10` - Sets a dial timeout to prevent hanging
+  - `server=hostname` - Explicitly sets the server hostname to prevent localhost resolution issues
 
 ### PostgreSQL
 

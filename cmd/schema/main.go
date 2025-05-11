@@ -50,6 +50,12 @@ func main() {
 		}
 	}
 
+	// Check if the protocol is correct (should be sqlserver:// not mssql://)
+	if strings.HasPrefix(dsn, "mssql://") {
+		dsn = "sqlserver://" + dsn[8:]
+		fmt.Println("Warning: Changed protocol from mssql:// to sqlserver://")
+	}
+
 	// Ensure the connection string has the required parameters for SQL Server
 	// This is especially important for AWS RDS instances
 
@@ -82,16 +88,37 @@ func main() {
 		dsnParams["connection timeout"] = "30"
 	}
 
+	// Add parameters for all connections
+	if _, ok := dsnParams["encrypt"]; !ok {
+		dsnParams["encrypt"] = "disable"
+	}
+	if _, ok := dsnParams["browser"]; !ok {
+		dsnParams["browser"] = "disable"
+	}
+	if _, ok := dsnParams["dial timeout"]; !ok {
+		dsnParams["dial timeout"] = "10"
+	}
+
 	// For AWS RDS instances, add specific parameters
 	if strings.Contains(dsn, "rds.amazonaws.com") {
-		if _, ok := dsnParams["encrypt"]; !ok {
-			dsnParams["encrypt"] = "disable"
-		}
 		if _, ok := dsnParams["server sni"]; !ok {
 			dsnParams["server sni"] = "disable"
 		}
-		if _, ok := dsnParams["browser"]; !ok {
-			dsnParams["browser"] = "disable"
+		// Ensure we're using the host from the connection string, not localhost
+		if _, ok := dsnParams["server"]; !ok {
+			// Extract host from connection string
+			host := ""
+			if strings.Contains(dsn, "@") {
+				parts := strings.Split(dsn, "@")
+				if len(parts) > 1 {
+					hostPort := strings.Split(parts[1], "/")
+					host = hostPort[0]
+					if strings.Contains(host, ":") {
+						host = strings.Split(host, ":")[0]
+					}
+					dsnParams["server"] = host
+				}
+			}
 		}
 	}
 
