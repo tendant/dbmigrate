@@ -153,11 +153,11 @@ func main() {
 	// List all available schemas in the database with table counts
 	fmt.Println("Listing available schemas in the source database:")
 	schemasQuery := `
-		SELECT s.name AS schema_name, COUNT(t.name) AS table_count
-		FROM sys.schemas s
-		LEFT JOIN sys.tables t ON s.schema_id = t.schema_id
-		GROUP BY s.name
-		ORDER BY table_count DESC, s.name`
+		SELECT TABLE_SCHEMA AS schema_name, COUNT(*) AS table_count
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_TYPE = 'BASE TABLE'
+		GROUP BY TABLE_SCHEMA
+		ORDER BY table_count DESC, schema_name`
 
 	schemaRows, err := sourceDb.Query(schemasQuery)
 	if err != nil {
@@ -306,16 +306,16 @@ func getSourceTables(db *sql.DB, schemas []string) ([]string, error) {
 		if i > 0 {
 			schemaFilter += " OR "
 		}
-		schemaFilter += "s.name = @p" + fmt.Sprintf("%d", i+1)
+		schemaFilter += "TABLE_SCHEMA = @p" + fmt.Sprintf("%d", i+1)
 		schemaParams[i] = schema
 	}
 
 	query := fmt.Sprintf(`
-		SELECT s.name AS schema_name, t.name AS table_name
-		FROM sys.tables t
-		JOIN sys.schemas s ON t.schema_id = s.schema_id
-		WHERE %s
-		ORDER BY s.name, t.name`, schemaFilter)
+		SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name
+		FROM INFORMATION_SCHEMA.TABLES
+		WHERE TABLE_TYPE = 'BASE TABLE'
+		AND (%s)
+		ORDER BY TABLE_SCHEMA, TABLE_NAME`, schemaFilter)
 
 	rows, err := db.Query(query, schemaParams...)
 	if err != nil {

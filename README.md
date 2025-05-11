@@ -182,7 +182,7 @@ Available schemas:
 Total: 13 schemas, 42 tables
 ```
 
-This helps you identify which schemas are available and their size before deciding which ones to include in your migration. The tools use system catalog views (`sys.schemas` and `sys.tables`) to provide accurate table counts for each schema, including system schemas. Schemas are displayed in descending order by table count, so you can easily identify the most data-rich schemas.
+This helps you identify which schemas are available and their size before deciding which ones to include in your migration. The tools use INFORMATION_SCHEMA views to provide accurate table counts for each schema, including system schemas. Schemas are displayed in descending order by table count, so you can easily identify the most data-rich schemas.
 
 ### Specifying Schemas to Include
 
