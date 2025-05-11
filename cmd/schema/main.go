@@ -47,6 +47,7 @@ func main() {
 	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
 	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	includeSystemSchemasFlag := flag.Bool("include-system-schemas", false, "Include system schemas in migration (default: false)")
+	preserveCaseFlag := flag.Bool("preserve-case", false, "Preserve case sensitivity of identifiers using double quotes (default: false)")
 	flag.Parse()
 
 	// Determine the DSN to use (command line arg -> environment variable -> default)
@@ -344,7 +345,13 @@ func main() {
 		tableKey := schema + "." + table
 		schemaTableMap[table] = tableKey
 
-		colDef := fmt.Sprintf("  \"%s\" %s %s", column, pgType, null)
+		// Format column definition based on preserve-case flag
+		var colDef string
+		if *preserveCaseFlag {
+			colDef = fmt.Sprintf("  \"%s\" %s %s", column, pgType, null)
+		} else {
+			colDef = fmt.Sprintf("  %s %s %s", column, pgType, null)
+		}
 		tables[tableKey] = append(tables[tableKey], colDef)
 	}
 
@@ -398,12 +405,18 @@ func main() {
 	for _, table := range tableNames {
 		columns := tables[table]
 		if pks, ok := pkMap[table]; ok && len(pks) > 0 {
-			// Quote each primary key column name
-			quotedPKs := make([]string, len(pks))
-			for i, pk := range pks {
-				quotedPKs[i] = fmt.Sprintf("\"%s\"", pk)
+			// Format primary key based on preserve-case flag
+			if *preserveCaseFlag {
+				// Quote each primary key column name
+				quotedPKs := make([]string, len(pks))
+				for i, pk := range pks {
+					quotedPKs[i] = fmt.Sprintf("\"%s\"", pk)
+				}
+				columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(quotedPKs, ", ")))
+			} else {
+				// Use primary key column names without quotes
+				columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(pks, ", ")))
 			}
-			columns = append(columns, fmt.Sprintf("  PRIMARY KEY (%s)", strings.Join(quotedPKs, ", ")))
 		}
 
 		var schemaSQL string
@@ -417,19 +430,34 @@ func main() {
 
 			// Create schema if it doesn't exist and we haven't created it yet
 			if !createdSchemas[schemaName] {
-				createSchema := fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\";\n\n", schemaName)
+				var createSchema string
+				if *preserveCaseFlag {
+					createSchema = fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\";\n\n", schemaName)
+				} else {
+					createSchema = fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;\n\n", schemaName)
+				}
 				file.WriteString(createSchema) // write to file
 				fmt.Print(createSchema)        // print to console
 				createdSchemas[schemaName] = true
 			}
 
 			// Create table in the specified schema
-			schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\".\"%s\" (\n%s\n);\n\n",
-				schemaName, tableName, strings.Join(columns, ",\n"))
+			if *preserveCaseFlag {
+				schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\".\"%s\" (\n%s\n);\n\n",
+					schemaName, tableName, strings.Join(columns, ",\n"))
+			} else {
+				schemaSQL = fmt.Sprintf("CREATE TABLE %s.%s (\n%s\n);\n\n",
+					schemaName, tableName, strings.Join(columns, ",\n"))
+			}
 		} else {
 			// Case 2: No schema specified, use public schema
-			schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);\n\n",
-				table, strings.Join(columns, ",\n"))
+			if *preserveCaseFlag {
+				schemaSQL = fmt.Sprintf("CREATE TABLE \"%s\" (\n%s\n);\n\n",
+					table, strings.Join(columns, ",\n"))
+			} else {
+				schemaSQL = fmt.Sprintf("CREATE TABLE %s (\n%s\n);\n\n",
+					table, strings.Join(columns, ",\n"))
+			}
 		}
 
 		fmt.Print(schemaSQL)        // print to console

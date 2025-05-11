@@ -28,6 +28,7 @@ go run cmd/schema/main.go [options]
 - `-dsn string`: SQL Server connection string
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
 - `-include-system-schemas`: Include system schemas in migration (default: false)
+- `-preserve-case`: Preserve case sensitivity of identifiers using double quotes (default: false)
 - `-debug`: Enable debug logging
 
 #### Environment Variables
@@ -47,6 +48,9 @@ go run cmd/schema/main.go -dsn "sqlserver://sa:StrongPassword@localhost:1433?dat
 # Using environment variable
 export DB_DSN="sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks"
 go run cmd/schema/main.go
+
+# Preserving case sensitivity
+go run cmd/schema/main.go -dsn "sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks" -preserve-case
 ```
 
 ### 2. Data Migration
@@ -69,6 +73,7 @@ go run cmd/migrate/main.go [options]
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
 - `-truncate`: Whether to truncate target tables before migration (default: false)
 - `-include-system-schemas`: Include system schemas in migration (default: false)
+- `-preserve-case`: Preserve case sensitivity of identifiers using double quotes (default: false)
 - `-debug`: Enable debug logging
 
 #### Environment Variables
@@ -93,6 +98,11 @@ go run cmd/migrate/main.go -source-dsn "sqlserver://sa:StrongPassword@localhost:
 export SOURCE_DB_DSN="sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks"
 export TARGET_DB_DSN="postgres://postgres:postgres@localhost:5432/adventureworks?sslmode=disable"
 go run cmd/migrate/main.go -batch-size 5000
+
+# Preserving case sensitivity
+go run cmd/migrate/main.go -source-dsn "sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks" \
+                          -target-dsn "postgres://postgres:postgres@localhost:5432/adventureworks?sslmode=disable" \
+                          -preserve-case
 ```
 
 ## Connection String Formats
@@ -231,10 +241,12 @@ go run cmd/migrate/main.go -source-dsn "sqlserver://user:pass@host:1433?database
 ```
 
 The generated PostgreSQL schema will:
-1. Create the necessary schemas if they don't exist (e.g., `CREATE SCHEMA IF NOT EXISTS "dbo";`)
-2. Create tables in their respective schemas (e.g., `CREATE TABLE "dbo"."Users"` instead of `CREATE TABLE "dbo.Users"`)
+1. Create the necessary schemas if they don't exist (e.g., `CREATE SCHEMA IF NOT EXISTS dbo;`)
+2. Create tables in their respective schemas (e.g., `CREATE TABLE dbo.Users` instead of `CREATE TABLE dbo.Users`)
 3. Properly handle tables without schema prefixes by creating them in the public schema
 4. Automatically exclude system schemas (like `sys`, `INFORMATION_SCHEMA`, etc.) unless `-include-system-schemas` is specified
+5. By default, use unquoted identifiers for schema, table, and column names (which will be lowercase in PostgreSQL)
+6. Optionally preserve case sensitivity with the `-preserve-case` flag, which adds double quotes around identifiers
 
 ### System Schema Handling
 
@@ -284,6 +296,29 @@ To perform a complete migration from SQL Server to PostgreSQL:
                              -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable" \
                              -schemas "dbo,sales,hr"
    ```
+
+### Complete Migration with Case Sensitivity Preserved
+
+If you need to preserve case sensitivity in your PostgreSQL database:
+
+1. Generate the PostgreSQL schema with case sensitivity:
+   ```bash
+   go run cmd/schema/main.go -dsn "sqlserver://sa:pass@localhost:1433?database=yourdb" -schemas "dbo,sales,hr" -preserve-case
+   ```
+
+2. Apply the generated schema to your PostgreSQL database:
+   ```bash
+   psql -U postgres -d yourdb -f postgres_schema.sql
+   ```
+
+3. Migrate the data with case sensitivity:
+   ```bash
+   go run cmd/migrate/main.go -source-dsn "sqlserver://sa:pass@localhost:1433?database=yourdb" \
+                             -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable" \
+                             -schemas "dbo,sales,hr" -preserve-case
+   ```
+
+This will ensure that all identifiers (schema names, table names, and column names) maintain their original case from SQL Server.
 
 ## Using the Docker Image
 
@@ -352,6 +387,30 @@ docker run --rm \
      /app/migrate -source-dsn "sqlserver://user:password@host:1433?database=yourdb" \
                  -target-dsn "postgres://postgres:password@host:5432/yourdb?sslmode=disable" \
                  -schemas "dbo,sales"
+   ```
+
+### Complete Migration with Case Sensitivity Using Docker
+
+1. Generate the PostgreSQL schema with case sensitivity:
+   ```bash
+   docker run --rm \
+     -v $(pwd):/output \
+     wang/dbmigrate:latest \
+     /app/schema -dsn "sqlserver://user:password@host:1433?database=yourdb" -schemas "dbo,sales" -preserve-case > postgres_schema.sql
+   ```
+
+2. Apply the generated schema to your PostgreSQL database:
+   ```bash
+   psql -U postgres -d yourdb -f postgres_schema.sql
+   ```
+
+3. Migrate the data with case sensitivity:
+   ```bash
+   docker run --rm \
+     wang/dbmigrate:latest \
+     /app/migrate -source-dsn "sqlserver://user:password@host:1433?database=yourdb" \
+                 -target-dsn "postgres://postgres:password@host:5432/yourdb?sslmode=disable" \
+                 -schemas "dbo,sales" -preserve-case
    ```
 
 ### Notes

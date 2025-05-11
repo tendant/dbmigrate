@@ -32,6 +32,7 @@ func main() {
 	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
 	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	includeSystemSchemasFlag := flag.Bool("include-system-schemas", false, "Include system schemas in migration (default: false)")
+	preserveCaseFlag := flag.Bool("preserve-case", false, "Preserve case sensitivity of identifiers using double quotes (default: false)")
 	flag.Parse()
 
 	// Determine the source DSN to use (command line arg -> environment variable -> default)
@@ -391,7 +392,13 @@ func main() {
 			schema := parts[0]
 			tableName := parts[1]
 
-			_, err := targetDb.Exec(fmt.Sprintf("TRUNCATE TABLE \"%s\".\"%s\"", schema, tableName))
+			var truncateSQL string
+			if *preserveCaseFlag {
+				truncateSQL = fmt.Sprintf("TRUNCATE TABLE \"%s\".\"%s\"", schema, tableName)
+			} else {
+				truncateSQL = fmt.Sprintf("TRUNCATE TABLE %s.%s", schema, tableName)
+			}
+			_, err := targetDb.Exec(truncateSQL)
 			if err != nil {
 				log.Printf("Warning: Could not truncate table %s: %v", table, err)
 			} else {
@@ -400,7 +407,7 @@ func main() {
 		}
 
 		// Migrate data
-		rowCount, err := migrateTableData(sourceDb, targetDb, table, columns, *batchSizeFlag)
+		rowCount, err := migrateTableData(sourceDb, targetDb, table, columns, *batchSizeFlag, *preserveCaseFlag)
 		if err != nil {
 			log.Fatalf("Error migrating data for table %s: %v", table, err)
 		}
@@ -489,7 +496,7 @@ func getTableColumns(db *sql.DB, fullTableName string) ([]string, error) {
 }
 
 // migrateTableData migrates data from the source table to the target table
-func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, columns []string, batchSize int) (int, error) {
+func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, columns []string, batchSize int, preserveCase bool) (int, error) {
 	// Split the full table name into schema and table
 	parts := strings.Split(fullTableName, ".")
 	if len(parts) != 2 {
@@ -504,8 +511,12 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 	sqlServerColumns := make([]string, len(columns))
 
 	for i, col := range columns {
-		// PostgreSQL uses double quotes for identifiers
-		columnList[i] = fmt.Sprintf("\"%s\"", col)
+		// Format PostgreSQL column names based on preserve-case flag
+		if preserveCase {
+			columnList[i] = fmt.Sprintf("\"%s\"", col)
+		} else {
+			columnList[i] = col
+		}
 		// SQL Server uses square brackets for identifiers
 		sqlServerColumns[i] = fmt.Sprintf("[%s]", col)
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
@@ -515,13 +526,24 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 	selectQuery := fmt.Sprintf("SELECT %s FROM [%s].[%s]", strings.Join(sqlServerColumns, ", "), schema, table)
 
 	// Prepare insert query with schema-qualified table name
-	insertQuery := fmt.Sprintf(
-		"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
-		schema,
-		table,
-		strings.Join(columnList, ", "),
-		strings.Join(placeholders, ", "),
-	)
+	var insertQuery string
+	if preserveCase {
+		insertQuery = fmt.Sprintf(
+			"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
+			schema,
+			table,
+			strings.Join(columnList, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	} else {
+		insertQuery = fmt.Sprintf(
+			"INSERT INTO %s.%s (%s) VALUES (%s)",
+			schema,
+			table,
+			strings.Join(columnList, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	}
 
 	// Execute select query
 	rows, err := sourceDb.Query(selectQuery)
