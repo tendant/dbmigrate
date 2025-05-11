@@ -6,12 +6,20 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/lib/pq"
 )
+
+// redactPassword replaces the password in a connection string with "***" for logging
+func redactPassword(dsn string) string {
+	// Match password in connection string
+	re := regexp.MustCompile(`(://[^:]+:)([^@]+)(@)`)
+	return re.ReplaceAllString(dsn, "${1}***${3}")
+}
 
 func main() {
 	// Define command line flags
@@ -22,6 +30,7 @@ func main() {
 	excludeTablesFlag := flag.String("exclude-tables", "", "Comma-separated list of tables to exclude from migration")
 	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
 	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
+	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
 	// Determine the source DSN to use (command line arg -> environment variable -> default)
@@ -118,7 +127,9 @@ func main() {
 		sourceDsn += strings.Join(paramStrings, "&")
 	}
 
-	fmt.Printf("Connecting to SQL Server source with DSN: %s\n", sourceDsn)
+	// Redact password from DSN for logging
+	redactedDsn := redactPassword(sourceDsn)
+	fmt.Printf("Connecting to SQL Server source with DSN: %s\n", redactedDsn)
 
 	// Determine the target DSN to use (command line arg -> environment variable -> default)
 	targetDsn := *targetDsnFlag
@@ -150,6 +161,27 @@ func main() {
 	}
 	fmt.Println("✅ Connected to SQL Server source database")
 
+	// Get current database name
+	var dbName string
+	err = sourceDb.QueryRow("SELECT DB_NAME()").Scan(&dbName)
+	if err != nil {
+		log.Printf("Warning: Could not determine current database name: %v", err)
+	} else {
+		fmt.Printf("Connected to database: %s\n", dbName)
+	}
+
+	// Get total table count for verification
+	var totalTableCount int
+	err = sourceDb.QueryRow(`
+		SELECT COUNT(*) 
+		FROM INFORMATION_SCHEMA.TABLES 
+		WHERE TABLE_TYPE = 'BASE TABLE'`).Scan(&totalTableCount)
+	if err != nil {
+		log.Printf("Warning: Could not get total table count: %v", err)
+	} else {
+		fmt.Printf("Total tables in database: %d\n", totalTableCount)
+	}
+
 	// List all available schemas in the database with table counts
 	fmt.Println("Listing available schemas in the source database:")
 	schemasQuery := `
@@ -159,9 +191,31 @@ func main() {
 		GROUP BY TABLE_SCHEMA
 		ORDER BY table_count DESC, schema_name`
 
+	if *debugFlag {
+		fmt.Printf("Executing schema query: %s\n", schemasQuery)
+	}
+
 	schemaRows, err := sourceDb.Query(schemasQuery)
 	if err != nil {
-		log.Printf("Warning: Could not list schemas: %v", err)
+		log.Printf("Error executing schema query: %v", err)
+		// Try a simpler query as fallback
+		fmt.Println("Trying fallback query...")
+		fallbackQuery := "SELECT DISTINCT TABLE_SCHEMA FROM INFORMATION_SCHEMA.TABLES"
+		fallbackRows, fallbackErr := sourceDb.Query(fallbackQuery)
+		if fallbackErr != nil {
+			log.Printf("Error executing fallback query: %v", fallbackErr)
+		} else {
+			defer fallbackRows.Close()
+			fmt.Println("Available schemas (fallback method):")
+			for fallbackRows.Next() {
+				var schemaName string
+				if err := fallbackRows.Scan(&schemaName); err != nil {
+					log.Printf("Error scanning schema name: %v", err)
+					continue
+				}
+				fmt.Printf("  - %s\n", schemaName)
+			}
+		}
 	} else {
 		var availableSchemas []string
 		schemaTableCounts := make(map[string]int)
