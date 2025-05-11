@@ -284,3 +284,79 @@ To perform a complete migration from SQL Server to PostgreSQL:
                              -target-dsn "postgres://postgres:pass@localhost:5432/yourdb?sslmode=disable" \
                              -schemas "dbo,sales,hr"
    ```
+
+## Using the Docker Image
+
+You can also use the pre-built Docker image `wang/dbmigrate` to run the migration tools without installing Go or building the project.
+
+### Pulling the Image
+
+```bash
+docker pull wang/dbmigrate:latest
+```
+
+### Running the Schema Migration Tool
+
+```bash
+docker run --rm \
+  -e DB_DSN="sqlserver://user:password@host:1433?database=yourdb" \
+  -v $(pwd):/output \
+  wang/dbmigrate:latest \
+  /app/schema -schemas "dbo,sales" > /output/postgres_schema.sql
+```
+
+### Running the Data Migration Tool
+
+```bash
+docker run --rm \
+  -e SOURCE_DB_DSN="sqlserver://user:password@host:1433?database=yourdb" \
+  -e TARGET_DB_DSN="postgres://postgres:password@host:5432/yourdb?sslmode=disable" \
+  wang/dbmigrate:latest \
+  /app/migrate -schemas "dbo,sales"
+```
+
+### Using Command-line Arguments Instead of Environment Variables
+
+```bash
+docker run --rm \
+  wang/dbmigrate:latest \
+  /app/schema -dsn "sqlserver://user:password@host:1433?database=yourdb" -schemas "dbo,sales" > postgres_schema.sql
+```
+
+### Complete Migration Process with Docker
+
+1. Generate the PostgreSQL schema:
+   ```bash
+   docker run --rm \
+     -v $(pwd):/output \
+     wang/dbmigrate:latest \
+     /app/schema -dsn "sqlserver://user:password@host:1433?database=yourdb" -schemas "dbo,sales" > postgres_schema.sql
+   ```
+
+2. Apply the generated schema to your PostgreSQL database:
+   ```bash
+   # If PostgreSQL is running locally
+   psql -U postgres -d yourdb -f postgres_schema.sql
+   
+   # Or using Docker
+   docker run --rm \
+     -v $(pwd):/input \
+     postgres:latest \
+     psql -h host -U postgres -d yourdb -f /input/postgres_schema.sql
+   ```
+
+3. Migrate the data:
+   ```bash
+   docker run --rm \
+     wang/dbmigrate:latest \
+     /app/migrate -source-dsn "sqlserver://user:password@host:1433?database=yourdb" \
+                 -target-dsn "postgres://postgres:password@host:5432/yourdb?sslmode=disable" \
+                 -schemas "dbo,sales"
+   ```
+
+### Notes
+
+- Replace `user:password@host` with your actual database credentials
+- The `-v $(pwd):/output` mounts your current directory to /output in the container for file output
+- Use `--network host` if your databases are running on localhost
+- For databases in Docker containers, use Docker networking to connect them
