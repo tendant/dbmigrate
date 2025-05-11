@@ -68,12 +68,23 @@ func validateSqlServerDsn(dsn string) (string, bool) {
 
 func main() {
 	// Define command line flags
+	// Database connection flags
 	sourceDsnFlag := flag.String("source-dsn", "", "SQL Server connection string (e.g., sqlserver://user:pass@host:1433?database=yourdb)")
 	targetDsnFlag := flag.String("target-dsn", "", "PostgreSQL connection string (e.g., postgres://user:pass@host:5432/dbname?sslmode=disable)")
-	batchSizeFlag := flag.Int("batch-size", 1000, "Number of rows to process in each batch")
+
+	// Table selection flags
 	tablesFlag := flag.String("tables", "", "Comma-separated list of tables to migrate (default: all)")
-	excludeTablesFlag := flag.String("exclude-tables", "", "Comma-separated list of tables to exclude from migration")
+	excludeTablesFlag := flag.String("exclude-tables", "", "Comma-separated list of tables to exclude from migration (supports wildcards with '*')")
+	excludeEmptyTablesFlag := flag.Bool("exclude-empty-tables", false, "Skip tables with no rows")
+	excludeLargeTablesFlag := flag.Int("exclude-large-tables", 0, "Skip tables with more rows than this value (0 = no limit)")
+	maxTableSizeFlag := flag.Int64("max-table-size", 0, "Skip tables larger than this size in MB (0 = no limit)")
+	skipIfExistsFlag := flag.Bool("skip-if-exists", false, "Skip migration if the target table already has data")
 	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
+
+	// Performance flags
+	batchSizeFlag := flag.Int("batch-size", 1000, "Number of rows to process in each batch")
+
+	// Behavior flags
 	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
 	debugFlag := flag.Bool("debug", false, "Enable debug logging")
 	includeSystemSchemasFlag := flag.Bool("include-system-schemas", false, "Include system schemas in migration (default: false)")
@@ -406,14 +417,164 @@ func main() {
 		filteredTables := make([]string, 0)
 		for _, table := range tables {
 			exclude := false
-			for _, excludeTable := range excludeTables {
-				if strings.EqualFold(strings.TrimSpace(excludeTable), table) {
+			for _, excludePattern := range excludeTables {
+				pattern := strings.TrimSpace(excludePattern)
+				// Support wildcard matching
+				if strings.Contains(pattern, "*") {
+					// Convert wildcard pattern to regex
+					regexPattern := "^" + strings.ReplaceAll(pattern, "*", ".*") + "$"
+					match, err := regexp.MatchString(regexPattern, table)
+					if err == nil && match {
+						exclude = true
+						fmt.Printf("Excluding table (wildcard match): %s\n", table)
+						break
+					}
+				} else if strings.EqualFold(pattern, table) {
 					exclude = true
+					fmt.Printf("Excluding table (exact match): %s\n", table)
 					break
 				}
 			}
 			if !exclude {
 				filteredTables = append(filteredTables, table)
+			}
+		}
+		tables = filteredTables
+	}
+
+	// Skip empty tables if specified
+	if *excludeEmptyTablesFlag {
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			// Check if table is empty
+			parts := strings.Split(table, ".")
+			if len(parts) != 2 {
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+			schema := parts[0]
+			tableName := parts[1]
+
+			var rowCount int
+			countQuery := fmt.Sprintf("SELECT COUNT(1) FROM [%s].[%s]", schema, tableName)
+			err := sourceDb.QueryRow(countQuery).Scan(&rowCount)
+			if err != nil {
+				log.Printf("Warning: Could not get row count for table %s: %v", table, err)
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+
+			if rowCount > 0 {
+				filteredTables = append(filteredTables, table)
+			} else {
+				fmt.Printf("Skipping empty table: %s\n", table)
+			}
+		}
+		tables = filteredTables
+	}
+
+	// Skip large tables if specified
+	if *excludeLargeTablesFlag > 0 {
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			// Check if table has more rows than the threshold
+			parts := strings.Split(table, ".")
+			if len(parts) != 2 {
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+			schema := parts[0]
+			tableName := parts[1]
+
+			var rowCount int
+			countQuery := fmt.Sprintf("SELECT COUNT(1) FROM [%s].[%s]", schema, tableName)
+			err := sourceDb.QueryRow(countQuery).Scan(&rowCount)
+			if err != nil {
+				log.Printf("Warning: Could not get row count for table %s: %v", table, err)
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+
+			if rowCount <= *excludeLargeTablesFlag {
+				filteredTables = append(filteredTables, table)
+			} else {
+				fmt.Printf("Skipping large table: %s (%d rows > threshold of %d)\n",
+					table, rowCount, *excludeLargeTablesFlag)
+			}
+		}
+		tables = filteredTables
+	}
+
+	// Skip tables larger than max size if specified
+	if *maxTableSizeFlag > 0 {
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			// Check if table is larger than the threshold
+			parts := strings.Split(table, ".")
+			if len(parts) != 2 {
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+			schema := parts[0]
+			tableName := parts[1]
+
+			// This is a rough estimate of table size based on SQL Server's sys.dm_db_partition_stats
+			sizeQuery := fmt.Sprintf(`
+				SELECT SUM(used_page_count) * 8 / 1024 AS size_mb
+				FROM sys.dm_db_partition_stats
+				WHERE object_id = OBJECT_ID('[%s].[%s]')
+			`, schema, tableName)
+
+			var sizeInMB int64
+			err := sourceDb.QueryRow(sizeQuery).Scan(&sizeInMB)
+			if err != nil {
+				log.Printf("Warning: Could not get size for table %s: %v", table, err)
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+
+			if sizeInMB <= *maxTableSizeFlag {
+				filteredTables = append(filteredTables, table)
+			} else {
+				fmt.Printf("Skipping large table: %s (%d MB > threshold of %d MB)\n",
+					table, sizeInMB, *maxTableSizeFlag)
+			}
+		}
+		tables = filteredTables
+	}
+
+	// Skip tables that already have data in the target database
+	if *skipIfExistsFlag {
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			// Check if target table already has data
+			parts := strings.Split(table, ".")
+			if len(parts) != 2 {
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+			schema := parts[0]
+			tableName := parts[1]
+
+			var countQuery string
+			if *preserveCaseFlag {
+				countQuery = fmt.Sprintf("SELECT COUNT(1) FROM \"%s\".\"%s\" LIMIT 1", schema, tableName)
+			} else {
+				countQuery = fmt.Sprintf("SELECT COUNT(1) FROM %s.%s LIMIT 1", schema, tableName)
+			}
+
+			var rowCount int
+			err := targetDb.QueryRow(countQuery).Scan(&rowCount)
+			if err != nil {
+				// If there's an error (e.g., table doesn't exist), include the table
+				filteredTables = append(filteredTables, table)
+				continue
+			}
+
+			if rowCount == 0 {
+				filteredTables = append(filteredTables, table)
+			} else {
+				fmt.Printf("Skipping table with existing data: %s\n", table)
 			}
 		}
 		tables = filteredTables

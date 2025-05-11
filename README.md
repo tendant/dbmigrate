@@ -68,11 +68,21 @@ go run cmd/migrate/main.go [options]
 - `-source-dsn string`: SQL Server connection string
 - `-target-dsn string`: PostgreSQL connection string
 - `-batch-size int`: Number of rows to process in each batch (default: 1000). This value is fully customizable and will be respected by the migration process.
+#### Table Selection Options
 - `-tables string`: Comma-separated list of tables to migrate (default: all)
-- `-exclude-tables string`: Comma-separated list of tables to exclude from migration
+- `-exclude-tables string`: Comma-separated list of tables to exclude from migration (supports wildcards with '*')
+- `-exclude-empty-tables`: Skip tables with no rows
+- `-exclude-large-tables int`: Skip tables with more rows than this value (0 = no limit)
+- `-max-table-size int`: Skip tables larger than this size in MB (0 = no limit)
+- `-skip-if-exists`: Skip migration if the target table already has data
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
-- `-truncate`: Whether to truncate target tables before migration (default: false)
 - `-include-system-schemas`: Include system schemas in migration (default: false)
+
+#### Performance Options
+- `-batch-size int`: Number of rows to process in each batch (default: 1000). This value is fully customizable and will be respected by the migration process.
+
+#### Behavior Options
+- `-truncate`: Whether to truncate target tables before migration (default: false)
 - `-preserve-case`: Preserve case sensitivity of identifiers using double quotes (default: false)
 - `-debug`: Enable debug logging
 
@@ -103,6 +113,15 @@ go run cmd/migrate/main.go -batch-size 5000
 go run cmd/migrate/main.go -source-dsn "sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks" \
                           -target-dsn "postgres://postgres:postgres@localhost:5432/adventureworks?sslmode=disable" \
                           -preserve-case
+
+# Skipping tables with filtering options
+go run cmd/migrate/main.go -source-dsn "sqlserver://sa:StrongPassword@localhost:1433?database=AdventureWorks" \
+                          -target-dsn "postgres://postgres:postgres@localhost:5432/adventureworks?sslmode=disable" \
+                          -exclude-tables "log_*,temp_*" \
+                          -exclude-empty-tables \
+                          -exclude-large-tables 1000000 \
+                          -max-table-size 500 \
+                          -skip-if-exists
 ```
 
 ## Connection String Formats
@@ -277,6 +296,79 @@ go run cmd/schema/main.go -dsn "sqlserver://user:pass@host:1433?database=yourdb"
 ```
 
 This ensures that the PostgreSQL database structure properly mirrors the SQL Server schema organization, making it easier to maintain the same access patterns and permissions model.
+
+### Table Filtering Options
+
+The data migration tool provides several options to filter which tables are migrated:
+
+#### Excluding Tables by Name
+
+The `-exclude-tables` flag allows you to specify tables to exclude from migration:
+
+```bash
+go run cmd/migrate/main.go -exclude-tables "log_table,temp_data,backup_*"
+```
+
+This flag supports wildcards using the `*` character, allowing you to exclude multiple tables with similar names. For example, `log_*` would exclude all tables starting with "log_".
+
+#### Excluding Empty Tables
+
+The `-exclude-empty-tables` flag skips tables that have no rows:
+
+```bash
+go run cmd/migrate/main.go -exclude-empty-tables
+```
+
+This is useful for skipping tables that are not actively used in the source database.
+
+#### Excluding Large Tables
+
+For large databases, you may want to exclude tables with too many rows or that are too large in size:
+
+```bash
+# Skip tables with more than 1 million rows
+go run cmd/migrate/main.go -exclude-large-tables 1000000
+
+# Skip tables larger than 500 MB
+go run cmd/migrate/main.go -max-table-size 500
+```
+
+These options are particularly useful when:
+- You need to migrate only the most important data first
+- You want to avoid timeouts with very large tables
+- You're testing the migration process before running it on all tables
+
+#### Skipping Tables with Existing Data
+
+The `-skip-if-exists` flag skips migration for tables that already have data in the target database:
+
+```bash
+go run cmd/migrate/main.go -skip-if-exists
+```
+
+This is useful for resuming a previously interrupted migration or for incremental migrations where you only want to migrate tables that haven't been migrated yet.
+
+#### Combining Filtering Options
+
+You can combine multiple filtering options to create a highly customized migration:
+
+```bash
+go run cmd/migrate/main.go \
+  -exclude-tables "log_*,temp_*,backup_*" \
+  -exclude-empty-tables \
+  -exclude-large-tables 1000000 \
+  -max-table-size 500 \
+  -skip-if-exists
+```
+
+This combination would:
+1. Exclude all tables matching the specified patterns
+2. Skip any empty tables
+3. Skip tables with more than 1 million rows
+4. Skip tables larger than 500 MB
+5. Skip tables that already have data in the target database
+
+This level of filtering gives you precise control over which tables are migrated, allowing you to optimize the migration process for your specific needs.
 
 ## Complete Migration Process
 
