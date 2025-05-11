@@ -27,6 +27,8 @@ go run cmd/schema/main.go [options]
 
 - `-dsn string`: SQL Server connection string
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
+- `-include-system-schemas`: Include system schemas in migration (default: false)
+- `-debug`: Enable debug logging
 
 #### Environment Variables
 
@@ -66,6 +68,8 @@ go run cmd/migrate/main.go [options]
 - `-exclude-tables string`: Comma-separated list of tables to exclude from migration
 - `-schemas string`: Comma-separated list of schemas to include (default: "dbo")
 - `-truncate`: Whether to truncate target tables before migration (default: false)
+- `-include-system-schemas`: Include system schemas in migration (default: false)
+- `-debug`: Enable debug logging
 
 #### Environment Variables
 
@@ -230,6 +234,28 @@ The generated PostgreSQL schema will:
 1. Create the necessary schemas if they don't exist (e.g., `CREATE SCHEMA IF NOT EXISTS "dbo";`)
 2. Create tables in their respective schemas (e.g., `CREATE TABLE "dbo"."Users"` instead of `CREATE TABLE "dbo.Users"`)
 3. Properly handle tables without schema prefixes by creating them in the public schema
+4. Automatically exclude system schemas (like `sys`, `INFORMATION_SCHEMA`, etc.) unless `-include-system-schemas` is specified
+
+### System Schema Handling
+
+By default, the tools exclude SQL Server system schemas to avoid migration errors. System schemas include:
+- `sys`
+- `INFORMATION_SCHEMA`
+- `db_owner`
+- `db_accessadmin`
+- `db_securityadmin`
+- `db_ddladmin`
+- `db_backupoperator`
+- `db_datareader`
+- `db_datawriter`
+- `db_denydatareader`
+- `db_denydatawriter`
+
+If you need to include system schemas for any reason, use the `-include-system-schemas` flag:
+
+```bash
+go run cmd/schema/main.go -dsn "sqlserver://user:pass@host:1433?database=yourdb" -include-system-schemas
+```
 
 This ensures that the PostgreSQL database structure properly mirrors the SQL Server schema organization, making it easier to maintain the same access patterns and permissions model.
 

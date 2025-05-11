@@ -31,6 +31,7 @@ func main() {
 	schemasFlag := flag.String("schemas", "dbo", "Comma-separated list of schemas to include (default: dbo)")
 	truncateFlag := flag.Bool("truncate", false, "Whether to truncate target tables before migration")
 	debugFlag := flag.Bool("debug", false, "Enable debug logging")
+	includeSystemSchemasFlag := flag.Bool("include-system-schemas", false, "Include system schemas in migration (default: false)")
 	flag.Parse()
 
 	// Determine the source DSN to use (command line arg -> environment variable -> default)
@@ -270,6 +271,40 @@ func main() {
 		schemas[i] = strings.TrimSpace(schema)
 	}
 	fmt.Printf("Including schemas: %s\n", strings.Join(schemas, ", "))
+
+	// Define system schemas to exclude
+	systemSchemas := map[string]bool{
+		"sys":                true,
+		"INFORMATION_SCHEMA": true,
+		"db_owner":           true,
+		"db_accessadmin":     true,
+		"db_securityadmin":   true,
+		"db_ddladmin":        true,
+		"db_backupoperator":  true,
+		"db_datareader":      true,
+		"db_datawriter":      true,
+		"db_denydatareader":  true,
+		"db_denydatawriter":  true,
+	}
+
+	// Filter out system schemas if not explicitly included
+	if !*includeSystemSchemasFlag {
+		filteredSchemas := make([]string, 0)
+		for _, schema := range schemas {
+			if !systemSchemas[schema] {
+				filteredSchemas = append(filteredSchemas, schema)
+			}
+		}
+
+		if len(filteredSchemas) == 0 {
+			log.Println("Warning: All specified schemas are system schemas. If you want to include system schemas, use the -include-system-schemas flag.")
+			// Default to dbo if all specified schemas are system schemas
+			filteredSchemas = []string{"dbo"}
+		}
+
+		schemas = filteredSchemas
+		fmt.Printf("After filtering system schemas: %s\n", strings.Join(schemas, ", "))
+	}
 
 	// Get list of tables from source database
 	tables, err := getSourceTables(sourceDb, schemas)
