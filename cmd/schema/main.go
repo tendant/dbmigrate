@@ -147,33 +147,43 @@ func main() {
 	}
 	defer db.Close()
 
-	// List all available schemas in the database
+	// List all available schemas in the database with table counts
 	fmt.Println("Listing available schemas in the database:")
 	schemasQuery := `
-		SELECT DISTINCT schema_name
-		FROM information_schema.schemata
-		ORDER BY schema_name`
+		SELECT s.schema_name, COUNT(t.table_name) as table_count
+		FROM information_schema.schemata s
+		LEFT JOIN information_schema.tables t ON s.schema_name = t.table_schema AND t.table_type = 'BASE TABLE'
+		GROUP BY s.schema_name
+		ORDER BY s.schema_name`
 
 	schemaRows, err := db.Query(schemasQuery)
 	if err != nil {
 		log.Printf("Warning: Could not list schemas: %v", err)
 	} else {
 		var availableSchemas []string
+		schemaTableCounts := make(map[string]int)
+
 		for schemaRows.Next() {
 			var schemaName string
-			if err := schemaRows.Scan(&schemaName); err != nil {
-				log.Printf("Warning: Error scanning schema name: %v", err)
+			var tableCount int
+			if err := schemaRows.Scan(&schemaName, &tableCount); err != nil {
+				log.Printf("Warning: Error scanning schema information: %v", err)
 				continue
 			}
 			availableSchemas = append(availableSchemas, schemaName)
+			schemaTableCounts[schemaName] = tableCount
 		}
 		schemaRows.Close()
 
 		if len(availableSchemas) > 0 {
 			fmt.Println("Available schemas:")
+			totalTables := 0
 			for _, schema := range availableSchemas {
-				fmt.Printf("  - %s\n", schema)
+				tableCount := schemaTableCounts[schema]
+				totalTables += tableCount
+				fmt.Printf("  - %s (%d tables)\n", schema, tableCount)
 			}
+			fmt.Printf("Total: %d schemas, %d tables\n", len(availableSchemas), totalTables)
 		} else {
 			fmt.Println("No schemas found or could not retrieve schema information.")
 		}

@@ -127,19 +127,20 @@ Both tools support working with multiple schemas in SQL Server. By default, they
 
 ### Schema Discovery
 
-When you run either tool, it will automatically list all available schemas in the database after connecting:
+When you run either tool, it will automatically list all available schemas in the database after connecting, along with the number of tables in each schema:
 
 ```
 Listing available schemas in the database:
 Available schemas:
-  - dbo
-  - sales
-  - hr
-  - security
-  - audit
+  - dbo (42 tables)
+  - sales (15 tables)
+  - hr (8 tables)
+  - security (3 tables)
+  - audit (5 tables)
+Total: 5 schemas, 73 tables
 ```
 
-This helps you identify which schemas are available before deciding which ones to include in your migration.
+This helps you identify which schemas are available and their size before deciding which ones to include in your migration.
 
 ### Specifying Schemas to Include
 
