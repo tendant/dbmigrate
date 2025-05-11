@@ -115,6 +115,40 @@ sqlserver://username:password@your-instance.rds.amazonaws.com:1433?database=dbna
   - `dial timeout=10` - Sets a dial timeout to prevent hanging
   - `server=hostname` - Explicitly sets the server hostname to prevent localhost resolution issues
 
+### Handling Special Characters in Passwords
+
+If your database password contains special characters, you need to URL-encode those characters in the connection string. Here are some common special characters and their URL-encoded equivalents:
+
+| Character | URL-Encoded |
+|-----------|-------------|
+| `@`       | `%40`       |
+| `:`       | `%3A`       |
+| `/`       | `%2F`       |
+| `?`       | `%3F`       |
+| `#`       | `%23`       |
+| `&`       | `%26`       |
+| `=`       | `%3D`       |
+| `+`       | `%2B`       |
+| `$`       | `%24`       |
+| `%`       | `%25`       |
+| ` ` (space) | `%20`     |
+
+For example, if your password is `p@ssw0rd!`, you would use `p%40ssw0rd%21` in the connection string:
+
+```
+sqlserver://username:p%40ssw0rd%21@host:1433?database=dbname
+```
+
+You can use online URL encoders or the following command to encode your password:
+
+```bash
+# For Linux/macOS
+echo -n "your_password" | python -c "import sys, urllib.parse; print(urllib.parse.quote(sys.stdin.read()))"
+
+# For Windows PowerShell
+[System.Web.HttpUtility]::UrlEncode("your_password")
+```
+
 ### PostgreSQL
 
 ```
@@ -132,15 +166,23 @@ When you run either tool, it will automatically list all available schemas in th
 ```
 Listing available schemas in the database:
 Available schemas:
+  - db_accessadmin (0 tables)
+  - db_backupoperator (0 tables)
+  - db_datareader (0 tables)
+  - db_datawriter (0 tables)
+  - db_ddladmin (0 tables)
+  - db_denydatareader (0 tables)
+  - db_denydatawriter (0 tables)
+  - db_owner (0 tables)
+  - db_securityadmin (0 tables)
   - dbo (42 tables)
-  - sales (15 tables)
-  - hr (8 tables)
-  - security (3 tables)
-  - audit (5 tables)
-Total: 5 schemas, 73 tables
+  - guest (0 tables)
+  - INFORMATION_SCHEMA (0 tables)
+  - sys (0 tables)
+Total: 13 schemas, 42 tables
 ```
 
-This helps you identify which schemas are available and their size before deciding which ones to include in your migration.
+This helps you identify which schemas are available and their size before deciding which ones to include in your migration. The tools use system catalog views (`sys.schemas` and `sys.tables`) to provide accurate table counts for each schema, including system schemas.
 
 ### Specifying Schemas to Include
 

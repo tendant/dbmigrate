@@ -150,11 +150,11 @@ func main() {
 	// List all available schemas in the database with table counts
 	fmt.Println("Listing available schemas in the database:")
 	schemasQuery := `
-		SELECT s.schema_name, COUNT(t.table_name) as table_count
-		FROM information_schema.schemata s
-		LEFT JOIN information_schema.tables t ON s.schema_name = t.table_schema AND t.table_type = 'BASE TABLE'
-		GROUP BY s.schema_name
-		ORDER BY s.schema_name`
+		SELECT s.name AS schema_name, COUNT(t.object_id) AS table_count
+		FROM sys.schemas s
+		LEFT JOIN sys.tables t ON s.schema_id = t.schema_id
+		GROUP BY s.name
+		ORDER BY s.name`
 
 	schemaRows, err := db.Query(schemasQuery)
 	if err != nil {
