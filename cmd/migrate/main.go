@@ -150,6 +150,38 @@ func main() {
 	}
 	fmt.Println("✅ Connected to SQL Server source database")
 
+	// List all available schemas in the database
+	fmt.Println("Listing available schemas in the source database:")
+	schemasQuery := `
+		SELECT DISTINCT schema_name
+		FROM information_schema.schemata
+		ORDER BY schema_name`
+
+	schemaRows, err := sourceDb.Query(schemasQuery)
+	if err != nil {
+		log.Printf("Warning: Could not list schemas: %v", err)
+	} else {
+		var availableSchemas []string
+		for schemaRows.Next() {
+			var schemaName string
+			if err := schemaRows.Scan(&schemaName); err != nil {
+				log.Printf("Warning: Error scanning schema name: %v", err)
+				continue
+			}
+			availableSchemas = append(availableSchemas, schemaName)
+		}
+		schemaRows.Close()
+
+		if len(availableSchemas) > 0 {
+			fmt.Println("Available schemas:")
+			for _, schema := range availableSchemas {
+				fmt.Printf("  - %s\n", schema)
+			}
+		} else {
+			fmt.Println("No schemas found or could not retrieve schema information.")
+		}
+	}
+
 	// Connect to target database (PostgreSQL)
 	targetDb, err := sql.Open("postgres", targetDsn)
 	if err != nil {

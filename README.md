@@ -123,7 +123,27 @@ postgres://username:password@host:port/dbname?sslmode=disable
 
 ## Working with Multiple Schemas
 
-Both tools support working with multiple schemas in SQL Server. By default, they only include tables from the "dbo" schema, but you can specify multiple schemas using the `-schemas` flag:
+Both tools support working with multiple schemas in SQL Server. By default, they only include tables from the "dbo" schema, but you can specify multiple schemas using the `-schemas` flag.
+
+### Schema Discovery
+
+When you run either tool, it will automatically list all available schemas in the database after connecting:
+
+```
+Listing available schemas in the database:
+Available schemas:
+  - dbo
+  - sales
+  - hr
+  - security
+  - audit
+```
+
+This helps you identify which schemas are available before deciding which ones to include in your migration.
+
+### Specifying Schemas to Include
+
+You can specify which schemas to include using the `-schemas` flag:
 
 ```bash
 # Include tables from multiple schemas
