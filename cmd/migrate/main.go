@@ -35,6 +35,25 @@ func main() {
 		}
 	}
 
+	// Ensure the connection string has the required parameters for SQL Server
+	// This is especially important for AWS RDS instances
+	if !strings.Contains(sourceDsn, "connection timeout") {
+		// Add connection timeout if not present
+		if strings.Contains(sourceDsn, "?") {
+			sourceDsn += "&connection timeout=30"
+		} else {
+			sourceDsn += "?connection timeout=30"
+		}
+	}
+
+	// Disable SQL Server Browser service lookup for AWS RDS instances
+	if strings.Contains(sourceDsn, "rds.amazonaws.com") && !strings.Contains(sourceDsn, "server sni") {
+		// Add server SNI parameter for AWS RDS instances
+		sourceDsn += "&server sni=disable"
+	}
+
+	fmt.Printf("Connecting to SQL Server source with DSN: %s\n", sourceDsn)
+
 	// Determine the target DSN to use (command line arg -> environment variable -> default)
 	targetDsn := *targetDsnFlag
 	if targetDsn == "" {

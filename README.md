@@ -97,6 +97,14 @@ go run cmd/migrate/main.go -batch-size 5000
 sqlserver://username:password@host:port?database=dbname
 ```
 
+For AWS RDS SQL Server instances, use:
+
+```
+sqlserver://username:password@your-instance.rds.amazonaws.com:1433?database=dbname&connection timeout=30
+```
+
+The tools will automatically add necessary parameters for AWS RDS instances.
+
 ### PostgreSQL
 
 ```
