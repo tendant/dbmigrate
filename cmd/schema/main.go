@@ -365,6 +365,20 @@ func main() {
 		pkMap[tableKey] = append(pkMap[tableKey], column)
 	}
 
+	// Filter out system tables (tables with names starting with "sys")
+	if !*includeSystemSchemasFlag {
+		for tableKey := range tables {
+			parts := strings.Split(tableKey, ".")
+			if len(parts) == 2 {
+				tableName := parts[1]
+				if strings.HasPrefix(strings.ToLower(tableName), "sys") {
+					fmt.Printf("Excluding system table: %s\n", tableKey)
+					delete(tables, tableKey)
+				}
+			}
+		}
+	}
+
 	// Write schema to file
 	file, err := os.Create("postgres_schema.sql")
 	if err != nil {

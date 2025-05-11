@@ -312,6 +312,25 @@ func main() {
 		log.Fatalf("Error getting tables: %v", err)
 	}
 
+	// Filter out system tables (tables with names starting with "sys")
+	if !*includeSystemSchemasFlag {
+		filteredTables := make([]string, 0)
+		for _, table := range tables {
+			parts := strings.Split(table, ".")
+			if len(parts) == 2 {
+				tableName := parts[1]
+				if !strings.HasPrefix(strings.ToLower(tableName), "sys") {
+					filteredTables = append(filteredTables, table)
+				} else {
+					fmt.Printf("Excluding system table: %s\n", table)
+				}
+			} else {
+				filteredTables = append(filteredTables, table)
+			}
+		}
+		tables = filteredTables
+	}
+
 	// Filter tables if specified
 	if *tablesFlag != "" {
 		includeTables := strings.Split(*tablesFlag, ",")

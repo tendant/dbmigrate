@@ -238,18 +238,23 @@ The generated PostgreSQL schema will:
 
 ### System Schema Handling
 
-By default, the tools exclude SQL Server system schemas to avoid migration errors. System schemas include:
-- `sys`
-- `INFORMATION_SCHEMA`
-- `db_owner`
-- `db_accessadmin`
-- `db_securityadmin`
-- `db_ddladmin`
-- `db_backupoperator`
-- `db_datareader`
-- `db_datawriter`
-- `db_denydatareader`
-- `db_denydatawriter`
+By default, the tools exclude SQL Server system schemas and tables to avoid migration errors:
+
+1. **System schemas** that are excluded:
+   - `sys`
+   - `INFORMATION_SCHEMA`
+   - `db_owner`
+   - `db_accessadmin`
+   - `db_securityadmin`
+   - `db_ddladmin`
+   - `db_backupoperator`
+   - `db_datareader`
+   - `db_datawriter`
+   - `db_denydatareader`
+   - `db_denydatawriter`
+
+2. **System tables** that are excluded:
+   - Any table with a name starting with "sys" (e.g., `systranschemas`, `sysdiagrams`, etc.)
 
 If you need to include system schemas for any reason, use the `-include-system-schemas` flag:
 
