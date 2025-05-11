@@ -113,6 +113,8 @@ go run cmd/migrate/main.go -source-dsn "sqlserver://sa:StrongPassword@localhost:
 sqlserver://username:password@host:port?database=dbname
 ```
 
+**Important:** The database name must be specified as a query parameter (`?database=dbname`), not as part of the path. The tools will automatically detect and fix incorrectly formatted connection strings where the database is specified in the path (e.g., `sqlserver://user:pass@host:1433/dbname` will be corrected to `sqlserver://user:pass@host:1433?database=dbname`).
+
 For AWS RDS SQL Server instances, use:
 
 ```

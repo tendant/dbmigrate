@@ -20,6 +20,51 @@ func redactPassword(dsn string) string {
 	return re.ReplaceAllString(dsn, "${1}***${3}")
 }
 
+// validateSqlServerDsn checks and fixes SQL Server connection string format
+// It ensures the database is specified as a query parameter (?database=dbname)
+// rather than as part of the path (/dbname)
+func validateSqlServerDsn(dsn string) (string, bool) {
+	// Check if there's a path component after the host:port
+	hostAndPath := strings.Split(dsn, "://")
+	if len(hostAndPath) != 2 {
+		return dsn, false // Not a valid URL format
+	}
+
+	parts := strings.Split(hostAndPath[1], "/")
+	if len(parts) <= 1 {
+		return dsn, false // No path component, already correct
+	}
+
+	// Extract host part and database from path
+	hostPart := parts[0]
+	dbName := parts[1]
+
+	// Check if there are query parameters
+	queryParams := ""
+	if strings.Contains(dbName, "?") {
+		dbParts := strings.SplitN(dbName, "?", 2)
+		dbName = dbParts[0]
+		queryParams = "?" + dbParts[1]
+	}
+
+	// Build the corrected DSN with database as a query parameter
+	correctedDsn := fmt.Sprintf("sqlserver://%s", hostPart)
+
+	// Add database parameter
+	if queryParams == "" {
+		correctedDsn += fmt.Sprintf("?database=%s", dbName)
+	} else {
+		// Check if database parameter already exists
+		if strings.Contains(queryParams, "database=") {
+			correctedDsn += queryParams
+		} else {
+			correctedDsn += fmt.Sprintf("?database=%s&%s", dbName, queryParams[1:])
+		}
+	}
+
+	return correctedDsn, true
+}
+
 var typeMapping = map[string]string{
 	"int":              "INTEGER",
 	"bigint":           "BIGINT",
@@ -66,6 +111,14 @@ func main() {
 	if strings.HasPrefix(dsn, "mssql://") {
 		dsn = "sqlserver://" + dsn[8:]
 		fmt.Println("Warning: Changed protocol from mssql:// to sqlserver://")
+	}
+
+	// Check if the database is specified correctly (as a query parameter, not in the path)
+	if correctedDsn, wasFixed := validateSqlServerDsn(dsn); wasFixed {
+		fmt.Printf("Warning: Incorrect database format in connection string. The database should be specified as a query parameter.\n")
+		fmt.Printf("Original: %s\n", redactPassword(dsn))
+		fmt.Printf("Corrected: %s\n", redactPassword(correctedDsn))
+		dsn = correctedDsn
 	}
 
 	// Ensure the connection string has the required parameters for SQL Server
