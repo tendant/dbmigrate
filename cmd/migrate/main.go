@@ -739,26 +739,6 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 	// Prepare select query with properly escaped column names
 	selectQuery := fmt.Sprintf("SELECT %s FROM [%s].[%s]", strings.Join(sqlServerColumns, ", "), schema, table)
 
-	// Prepare insert query with schema-qualified table name
-	var insertQuery string
-	if preserveCase {
-		insertQuery = fmt.Sprintf(
-			"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
-			schema,
-			table,
-			strings.Join(columnList, ", "),
-			strings.Join(placeholders, ", "),
-		)
-	} else {
-		insertQuery = fmt.Sprintf(
-			"INSERT INTO %s.%s (%s) VALUES (%s)",
-			schema,
-			table,
-			strings.Join(columnList, ", "),
-			strings.Join(placeholders, ", "),
-		)
-	}
-
 	// Execute select query
 	rows, err := sourceDb.Query(selectQuery)
 	if err != nil {
@@ -778,12 +758,64 @@ func migrateTableData(sourceDb *sql.DB, targetDb *sql.DB, fullTableName string, 
 		return 0, fmt.Errorf("error starting transaction: %v", err)
 	}
 
-	// Prepare statement within transaction
-	stmt, err := tx.Prepare(insertQuery)
-	if err != nil {
-		tx.Rollback()
-		return 0, fmt.Errorf("error preparing insert statement: %v", err)
+	// Try different case variations for the table name to handle PostgreSQL's case sensitivity
+	var stmt *sql.Stmt
+	var insertQuery string
+	var prepareErr error
+
+	// First attempt: Use the original case as specified by the preserveCase flag
+	if preserveCase {
+		insertQuery = fmt.Sprintf(
+			"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
+			schema,
+			table,
+			strings.Join(columnList, ", "),
+			strings.Join(placeholders, ", "),
+		)
+	} else {
+		insertQuery = fmt.Sprintf(
+			"INSERT INTO %s.%s (%s) VALUES (%s)",
+			schema,
+			table,
+			strings.Join(columnList, ", "),
+			strings.Join(placeholders, ", "),
+		)
 	}
+
+	stmt, prepareErr = tx.Prepare(insertQuery)
+
+	// If the first attempt fails with a "relation does not exist" error, try with lowercase
+	if prepareErr != nil && strings.Contains(prepareErr.Error(), "does not exist") {
+		// Second attempt: Try with lowercase schema and table names
+		insertQuery = fmt.Sprintf(
+			"INSERT INTO %s.%s (%s) VALUES (%s)",
+			strings.ToLower(schema),
+			strings.ToLower(table),
+			strings.Join(columnList, ", "),
+			strings.Join(placeholders, ", "),
+		)
+		stmt, prepareErr = tx.Prepare(insertQuery)
+
+		// If that also fails, try with quoted lowercase
+		if prepareErr != nil && strings.Contains(prepareErr.Error(), "does not exist") {
+			// Third attempt: Try with quoted lowercase schema and table names
+			insertQuery = fmt.Sprintf(
+				"INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s)",
+				strings.ToLower(schema),
+				strings.ToLower(table),
+				strings.Join(columnList, ", "),
+				strings.Join(placeholders, ", "),
+			)
+			stmt, prepareErr = tx.Prepare(insertQuery)
+		}
+	}
+
+	// If all attempts failed, return the error
+	if prepareErr != nil {
+		tx.Rollback()
+		return 0, fmt.Errorf("error preparing insert statement: %v", prepareErr)
+	}
+
 	defer stmt.Close()
 
 	for rows.Next() {
